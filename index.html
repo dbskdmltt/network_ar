@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Network Line AR</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10151e;font-family:system-ui,-apple-system,sans-serif;touch-action:none}#camera,#canvas{position:fixed;inset:0;width:100%;height:100%}#camera{object-fit:cover}#canvas{touch-action:none}#shade{position:fixed;inset:0;pointer-events:none;background:linear-gradient(#0008,transparent 25%,transparent 75%,#0009)}#top{position:fixed;top:env(safe-area-inset-top,0px);left:0;right:0;padding:18px 18px 8px;color:white;pointer-events:none}#title{font-size:12px;letter-spacing:.2em;opacity:.7}#stats{display:flex;gap:18px;margin-top:8px;font-weight:650;font-size:15px}#hint{font-size:12px;opacity:.8;margin-top:10px;max-width:380px;line-height:1.5}#controls{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:0;right:0;display:flex;justify-content:center;gap:9px;padding:0 12px}button{border:1px solid #ffffff55;border-radius:30px;padding:12px 16px;color:white;background:#17212bdc;font-weight:600;cursor:pointer;backdrop-filter:blur(8px)}button.primary{background:#c5f5ff;color:#10232b;border:0}button:disabled{opacity:.45}#notice{position:fixed;top:40%;left:50%;transform:translateX(-50%);background:#142330e8;color:#fff;border-radius:14px;padding:12px 18px;pointer-events:none;opacity:0;transition:opacity .2s;white-space:nowrap;font-size:13px}#notice.show{opacity:1}
+</style>
+</head>
+<body>
+<video id="camera" autoplay muted playsinline></video><canvas id="canvas"></canvas><div id="shade"></div>
+<div id="top"><div id="title">NETWORK / AR DRAWING</div><div id="stats"><span>POINTS <b id="pointCount">2</b></span><span>LINES <b id="lineCount">0</b></span></div><div id="hint">흰색 점을 향해 기존 점에서 드래그하세요. 곡선도 자동으로 직선이 됩니다.</div></div>
+<div id="notice" role="status"></div><div id="controls"><button class="primary" id="start">카메라 시작</button><button id="reset">초기화</button><button id="flip">카메라 전환</button></div>
+<script>
+(()=>{'use strict';
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d'),video=document.getElementById('camera');
+const pointCount=document.getElementById('pointCount'),lineCount=document.getElementById('lineCount'),hint=document.getElementById('hint');
+const startButton=document.getElementById('start'),flipButton=document.getElementById('flip');
+let W=0,H=0,dpr=1,nodes=[],edges=[],active=null,cameraStream=null,facing='environment',noticeTimer=null,successAt=0;
+const rand=(a,b)=>a+Math.random()*(b-a),distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+function notify(msg){const el=document.getElementById('notice');el.textContent=msg;el.classList.add('show');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>el.classList.remove('show'),1700)}
+function safeBounds(){return {left:35,right:Math.max(36,W-35),top:Math.min(155,H*.26),bottom:Math.max(170,H-115)}}
+function reset(){const b=safeBounds();nodes=[{id:0,x:W*.32,y:H*.47,done:true},{id:1,x:W*.69,y:H*.52,done:false}];edges=[];active=null;successAt=0;update();notify('새 네트워크를 시작합니다')}
+function update(){pointCount.textContent=nodes.length;lineCount.textContent=edges.length;hint.textContent='기존의 파란 점 아무 곳에서 시작해 흰색 새 점까지 드래그하세요. 선은 직선으로 보정됩니다.'}
+function resize(){const oldW=W,oldH=H;W=innerWidth;H=innerHeight;dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);if(nodes.length&&oldW&&oldH){for(const n of nodes){n.x=n.x/oldW*W;n.y=n.y/oldH*H}}else reset()}
+function nextNode(){const b=safeBounds(),last=nodes.at(-1);let best=null,bestScore=-Infinity;for(let i=0;i<140;i++){const p={x:rand(b.left,b.right),y:rand(b.top,b.bottom)};const nearest=Math.min(...nodes.map(n=>distance(n,p)));const score=nearest-Math.abs(distance(last,p)-Math.min(W,H)*.43)*.22;if(score>bestScore){bestScore=score;best=p}}nodes.push({id:nodes.length,x:best.x,y:best.y,done:false});update()}
+function hit(p){let found=null,smallest=Infinity;for(const n of nodes.slice(0,-1)){const d=distance(n,p);if(d<Math.max(25,Math.min(W,H)*.065)&&d<smallest){smallest=d;found=n}}return found}
+const pointer=e=>({x:e.clientX,y:e.clientY});
+canvas.addEventListener('pointerdown',e=>{if(active)return;const p=pointer(e),node=hit(p);if(!node){notify('파란 점에서 시작하세요');return}active={id:e.pointerId,from:node,to:p};try{canvas.setPointerCapture(e.pointerId)}catch{}e.preventDefault()});
+canvas.addEventListener('pointermove',e=>{if(active&&e.pointerId===active.id){active.to=pointer(e);e.preventDefault()}});
+function end(e,cancel=false){if(!active||e.pointerId!==active.id)return;const p=pointer(e),target=nodes.at(-1);if(!cancel&&distance(p,target)<Math.max(38,Math.min(W,H)*.09)){edges.push({a:active.from.id,b:target.id});target.done=true;successAt=performance.now();nextNode()}else if(!cancel)notify('흰색 점 안에서 손을 떼세요');active=null}
+canvas.addEventListener('pointerup',e=>end(e));canvas.addEventListener('pointercancel',e=>end(e,true));
+function segment(a,b,color,width){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.stroke()}
+function circle(p,r,fill){ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill()}
+function frame(t){ctx.clearRect(0,0,W,H);for(const e of edges){const a=nodes[e.a],b=nodes[e.b];segment(a,b,'#59d9ff',3);segment(a,b,'#a4efff33',9)}const target=nodes.at(-1);if(active){segment(active.from,active.to,'#eafcff',2.7);circle(active.to,4,'#eafcff')}for(const n of nodes){const isTarget=n.id===target.id;if(isTarget){const pulse=4*Math.sin(t*.005);ctx.beginPath();ctx.arc(n.x,n.y,21+pulse,0,Math.PI*2);ctx.strokeStyle='#ffffff88';ctx.lineWidth=1.5;ctx.stroke();circle(n,9,'#ffffff');circle(n,4,'#0e2736')}else{circle(n,7,'#67dfff');circle(n,3,'#ffffff')}}if(t-successAt<380&&successAt){circle(nodes.at(-2),11+(t-successAt)*.09,'#ffffff18')}requestAnimationFrame(frame)}
+async function startCamera(){if(!navigator.mediaDevices?.getUserMedia){notify('HTTPS 또는 localhost에서 열어주세요');return}try{if(cameraStream)cameraStream.getTracks().forEach(track=>track.stop());cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:false});video.srcObject=cameraStream;await video.play();startButton.textContent='카메라 켜짐';startButton.disabled=true;notify('카메라 연결 완료')}catch(err){console.error(err);notify('카메라 권한을 확인하세요. 게임은 계속 사용할 수 있습니다')}}
+startButton.addEventListener('click',startCamera);flipButton.addEventListener('click',()=>{facing=facing==='environment'?'user':'environment';startCamera()});document.getElementById('reset').addEventListener('click',reset);addEventListener('resize',resize);resize();requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
